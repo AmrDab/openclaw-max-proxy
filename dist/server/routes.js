@@ -1,8 +1,7 @@
 import { v4 as uuidv4 } from "uuid";
 import { ClaudeSubprocess } from "../subprocess/manager.js";
-import { openaiToCli, extractModel, stripAssistantBleed } from "../adapter/openai-to-cli.js";
+import { openaiToCli, stripAssistantBleed } from "../adapter/openai-to-cli.js";
 import { cliResultToOpenai, createDoneChunk, parseToolCalls, createToolCallChunks } from "../adapter/cli-to-openai.js";
-import { sessionManager } from "../session/manager.js";
 // ── Route Handlers ─────────────────────────────────────────────────
 /**
  * Handle POST /v1/chat/completions
@@ -25,44 +24,13 @@ export async function handleChatCompletions(req, res) {
             });
             return;
         }
-        // Session management: determine if we should resume an existing session
-        const conversationId = body.user;
-        let hasExistingSession = false;
-        let claudeSessionId;
-        if (conversationId) {
-            const existing = sessionManager.get(conversationId);
-            if (existing) {
-                hasExistingSession = true;
-                claudeSessionId = existing.claudeSessionId;
-                existing.lastUsedAt = Date.now();
-                sessionManager.save().catch((err) => console.error("[SessionManager] Save error:", err));
-                console.error(`[Session] Resuming: ${conversationId} -> ${claudeSessionId}`);
-            }
-            else {
-                claudeSessionId = sessionManager.getOrCreate(conversationId, extractModel(body.model));
-                console.error(`[Session] New: ${conversationId} -> ${claudeSessionId}`);
-            }
-        }
-        // Convert to CLI input format (only latest message if resuming)
-        const cliInput = openaiToCli(body, hasExistingSession);
-        // Build subprocess options with session info
+        // Convert to CLI input format
+        const cliInput = openaiToCli(body);
         const subOpts = {
             model: cliInput.model,
             systemPrompt: cliInput.systemPrompt,
         };
-        if (hasExistingSession && claudeSessionId) {
-            subOpts.resumeSessionId = claudeSessionId;
-        }
-        else if (claudeSessionId) {
-            subOpts.sessionId = claudeSessionId;
-        }
         const subprocess = new ClaudeSubprocess();
-        // Handle resume failures: invalidate session so next request starts fresh
-        subprocess.on("resume_failed", () => {
-            console.error(`[Session] Resume failed, invalidating: ${conversationId}`);
-            if (conversationId)
-                sessionManager.delete(conversationId);
-        });
         // External tool calling: present and not explicitly disabled
         const hasTools = Array.isArray(body.tools) &&
             body.tools.length > 0 &&

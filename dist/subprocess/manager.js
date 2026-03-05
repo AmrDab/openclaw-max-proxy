@@ -8,7 +8,6 @@ import { spawn } from "child_process";
 import { EventEmitter } from "events";
 import path from "path";
 import { isAssistantMessage, isResultMessage, isContentDelta, } from "../types/claude-cli.js";
-// Stable cwd for session file consistency
 const PROXY_CWD = path.join(process.env.HOME || "/tmp", ".openclaw", "workspace");
 const ACTIVITY_TIMEOUT = 600_000; // 10 minutes (no stdout activity = stuck)
 export class ClaudeSubprocess extends EventEmitter {
@@ -65,18 +64,11 @@ export class ClaudeSubprocess extends EventEmitter {
                     this.buffer += data;
                     this.processBuffer();
                 });
-                // Capture stderr for debugging and resume failure detection
+                // Capture stderr for debugging
                 this.process.stderr?.on("data", (chunk) => {
                     const errorText = chunk.toString().trim();
                     if (errorText) {
                         console.error("[Subprocess stderr]:", errorText.slice(0, 500));
-                        // Detect resume failures so caller can invalidate the session
-                        if (errorText.includes("Failed to resume") ||
-                            errorText.includes("Session not found") ||
-                            errorText.includes("--resume requires") ||
-                            errorText.includes("Could not find session")) {
-                            this.emit("resume_failed", errorText);
-                        }
                     }
                 });
                 // Handle process close
@@ -112,13 +104,6 @@ export class ClaudeSubprocess extends EventEmitter {
             options.model,
             "--dangerously-skip-permissions",
         ];
-        // Session handling: --resume for continuing, --session-id for new
-        if (options.resumeSessionId) {
-            args.push("--resume", options.resumeSessionId);
-        }
-        else if (options.sessionId) {
-            args.push("--session-id", options.sessionId);
-        }
         // Pass system prompt as a native CLI flag
         if (options.systemPrompt) {
             args.push("--system-prompt", options.systemPrompt);
