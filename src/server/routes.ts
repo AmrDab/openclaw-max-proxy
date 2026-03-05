@@ -6,192 +6,12 @@
  */
 import type { Request, Response } from "express";
 import { v4 as uuidv4 } from "uuid";
-import { spawn as nodeSpawn } from "child_process";
-import path from "path";
-import fs from "fs";
 import { ClaudeSubprocess } from "../subprocess/manager.js";
 import type { SubprocessOptions } from "../subprocess/manager.js";
-import { openaiToCli, extractModel, stripAssistantBleed } from "../adapter/openai-to-cli.js";
+import { openaiToCli, stripAssistantBleed } from "../adapter/openai-to-cli.js";
 import type { CliInput } from "../adapter/openai-to-cli.js";
 import { cliResultToOpenai, createDoneChunk, parseToolCalls, createToolCallChunks } from "../adapter/cli-to-openai.js";
-import { sessionManager } from "../session/manager.js";
 
-// ── Telegram Progress Reporter ─────────────────────────────────────
-// Shows real-time progress updates in Telegram while the CLI runs
-// tool calls (Bash, WebSearch, Read, etc.). Sends one message on the
-// first tool call, then edits it on subsequent calls, and deletes it
-// when the final response is ready.
-
-const TOOL_LABELS: Record<string, string> = {
-    "Bash":       "執行命令",
-    "Read":       "讀取檔案",
-    "Write":      "寫入檔案",
-    "Edit":       "編輯檔案",
-    "Grep":       "搜尋內容",
-    "Glob":       "搜尋檔案",
-    "WebSearch":  "搜尋網頁",
-    "WebFetch":   "讀取網頁",
-    "TodoRead":   "讀取待辦",
-    "TodoWrite":  "更新待辦",
-};
-
-let _cachedBotToken: string | null | undefined = undefined;
-
-function getTelegramBotToken(): string | null {
-    if (_cachedBotToken !== undefined) return _cachedBotToken;
-    try {
-        const configPath = path.join(process.env.HOME || "/tmp", ".openclaw", "openclaw.json");
-        const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-        _cachedBotToken = config?.channels?.telegram?.botToken || null;
-    } catch (err: any) {
-        console.error("[ProgressReporter] Failed to read bot token:", err.message);
-        _cachedBotToken = null;
-    }
-    return _cachedBotToken;
-}
-
-async function telegramApi(method: string, params: Record<string, unknown>): Promise<any> {
-    const token = getTelegramBotToken();
-    if (!token) return null;
-    try {
-        const resp = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(params),
-        });
-        const data: any = await resp.json();
-        if (!data.ok) {
-            console.error(`[TelegramAPI] ${method} failed:`, data.description);
-        }
-        return data;
-    } catch (err: any) {
-        console.error(`[TelegramAPI] ${method} error:`, err.message);
-        return null;
-    }
-}
-
-/**
- * Manages a single Telegram progress message that gets updated as
- * the CLI calls different tools. One instance per request.
- */
-class ProgressReporter {
-    static MIN_UPDATE_INTERVAL = 3000; // 3s between edits
-    private chatId: string | null;
-    private messageId: number | null = null;
-    private toolHistory: string[] = [];
-    private lastUpdateAt = 0;
-    private pendingLabel: string | null = null;
-    private throttleTimer: ReturnType<typeof setTimeout> | null = null;
-    private isDeleted = false;
-
-    constructor(chatId: string | null) {
-        this.chatId = chatId;
-    }
-
-    /**
-     * Build the progress message text from tool history.
-     */
-    private _buildText(): string {
-        if (this.toolHistory.length === 0) return "⏳ 處理中...";
-        const lines = this.toolHistory.map((label, i) => {
-            if (i === 0) return `⏳ ${label}...`;
-            return `     ${label}...`;
-        });
-        return lines.join("\n");
-    }
-
-    /**
-     * Report a new tool call. Sends or edits the progress message.
-     */
-    async report(toolName: string): Promise<void> {
-        if (this.isDeleted || !this.chatId) return;
-        const label = TOOL_LABELS[toolName] || toolName;
-        if (this.toolHistory.length > 0 && this.toolHistory[this.toolHistory.length - 1] === label) return;
-        this.toolHistory.push(label);
-        if (this.toolHistory.length > 6) this.toolHistory = this.toolHistory.slice(-6);
-
-        const now = Date.now();
-        const elapsed = now - this.lastUpdateAt;
-        if (elapsed >= ProgressReporter.MIN_UPDATE_INTERVAL) {
-            await this._flush();
-        } else {
-            this.pendingLabel = label;
-            if (!this.throttleTimer) {
-                this.throttleTimer = setTimeout(async () => {
-                    this.throttleTimer = null;
-                    if (!this.isDeleted) await this._flush();
-                }, ProgressReporter.MIN_UPDATE_INTERVAL - elapsed);
-            }
-        }
-    }
-
-    /**
-     * Actually send or edit the Telegram message.
-     */
-    private async _flush(): Promise<void> {
-        if (this.isDeleted) return;
-        this.lastUpdateAt = Date.now();
-        this.pendingLabel = null;
-        const text = this._buildText();
-
-        if (!this.messageId) {
-            const result = await telegramApi("sendMessage", {
-                chat_id: this.chatId,
-                text,
-                disable_notification: true,
-            });
-            if (result?.ok) {
-                this.messageId = result.result.message_id;
-                console.error(`[ProgressReporter] Sent progress message #${this.messageId}`);
-            }
-        } else {
-            await telegramApi("editMessageText", {
-                chat_id: this.chatId,
-                message_id: this.messageId,
-                text,
-            });
-        }
-    }
-
-    /**
-     * Clean up: delete the progress message when the final response arrives.
-     */
-    async cleanup(): Promise<void> {
-        this.isDeleted = true;
-        if (this.throttleTimer) {
-            clearTimeout(this.throttleTimer);
-            this.throttleTimer = null;
-        }
-        if (this.messageId && this.chatId) {
-            await telegramApi("deleteMessage", {
-                chat_id: this.chatId,
-                message_id: this.messageId,
-            });
-            console.error(`[ProgressReporter] Deleted progress message #${this.messageId}`);
-        }
-    }
-}
-
-/**
- * Send a notification message to Telegram via oc-tool.
- * Fire-and-forget — errors are logged but don't affect the caller.
- */
-function notifyTelegram(message: string): void {
-    const telegramId = process.env.TELEGRAM_NOTIFY_ID;
-    if (!telegramId) return;
-
-    const ocTool = path.join(process.env.HOME || "/tmp", ".openclaw", "bin", "oc-tool");
-    try {
-        const proc = nodeSpawn(ocTool, ["message", "send", JSON.stringify({
-            channel: "telegram",
-            target: `telegram:${telegramId}`,
-            message,
-        })], { env: { ...process.env }, stdio: "ignore", detached: true });
-        proc.unref();
-    } catch (err: any) {
-        console.error("[notifyTelegram] Failed:", err.message);
-    }
-}
 
 // ── Route Handlers ─────────────────────────────────────────────────
 
@@ -218,57 +38,15 @@ export async function handleChatCompletions(req: Request, res: Response): Promis
             return;
         }
 
-        // Session management: determine if we should resume an existing session
-        const conversationId: string | undefined = body.user;
-        let hasExistingSession = false;
-        let claudeSessionId: string | undefined;
+        // Convert to CLI input format
+        const cliInput = openaiToCli(body);
 
-        if (conversationId) {
-            const existing = sessionManager.get(conversationId);
-            if (existing) {
-                hasExistingSession = true;
-                claudeSessionId = existing.claudeSessionId;
-                existing.lastUsedAt = Date.now();
-                sessionManager.save().catch((err) =>
-                    console.error("[SessionManager] Save error:", err)
-                );
-                console.error(
-                    `[Session] Resuming: ${conversationId} -> ${claudeSessionId}`
-                );
-            } else {
-                claudeSessionId = sessionManager.getOrCreate(
-                    conversationId,
-                    extractModel(body.model)
-                );
-                console.error(
-                    `[Session] New: ${conversationId} -> ${claudeSessionId}`
-                );
-            }
-        }
-
-        // Convert to CLI input format (only latest message if resuming)
-        const cliInput = openaiToCli(body, hasExistingSession);
-
-        // Build subprocess options with session info
         const subOpts: SubprocessOptions = {
             model: cliInput.model,
             systemPrompt: cliInput.systemPrompt,
         };
-        if (hasExistingSession && claudeSessionId) {
-            subOpts.resumeSessionId = claudeSessionId;
-        } else if (claudeSessionId) {
-            subOpts.sessionId = claudeSessionId;
-        }
 
         const subprocess = new ClaudeSubprocess();
-
-        // Handle resume failures: invalidate session so next request starts fresh
-        subprocess.on("resume_failed", () => {
-            console.error(
-                `[Session] Resume failed, invalidating: ${conversationId}`
-            );
-            if (conversationId) sessionManager.delete(conversationId);
-        });
 
         // External tool calling: present and not explicitly disabled
         const hasTools =
@@ -326,6 +104,7 @@ async function handleStreamingResponse(
         // We accumulate streamed text to detect [User]/[Human] bleed patterns.
         // Once a bleed sentinel is detected, we stop forwarding further deltas.
         let accumulated = "";
+        let totalFlushed = 0;
         let bleedDetected = false;
         // Longest sentinel we watch for, so we know how much tail to hold back
         const BLEED_SENTINELS = ["\n[User]", "\n[Human]", "\nHuman:"];
@@ -368,11 +147,9 @@ async function handleStreamingResponse(
             // Check if the accumulated text contains a bleed sentinel
             const safe = stripAssistantBleed(accumulated);
             if (safe.length < accumulated.length) {
-                // Bleed found — write the safe portion and stop
+                // Bleed found — write only the unflushed safe portion and stop
                 bleedDetected = true;
-                // Only write the part we haven't written yet
-                const alreadyWritten = accumulated.length - incoming.length;
-                const safeNew = safe.slice(alreadyWritten);
+                const safeNew = safe.slice(totalFlushed);
                 if (safeNew) writeDelta(safeNew);
                 console.error("[Stream] Bleed detected — halting delta stream");
                 return;
@@ -381,10 +158,10 @@ async function handleStreamingResponse(
             // No bleed yet, but hold back the last MAX_SENTINEL_LEN chars as a
             // look-ahead buffer in case a sentinel straddles two delta chunks.
             const safeLen = Math.max(0, accumulated.length - MAX_SENTINEL_LEN);
-            const alreadyFlushed = accumulated.length - incoming.length;
-            const toFlush = safeLen - alreadyFlushed;
+            const toFlush = safeLen - totalFlushed;
             if (toFlush > 0) {
-                writeDelta(accumulated.slice(alreadyFlushed, alreadyFlushed + toFlush));
+                writeDelta(accumulated.slice(totalFlushed, totalFlushed + toFlush));
+                totalFlushed += toFlush;
             }
         }
 
@@ -394,26 +171,19 @@ async function handleStreamingResponse(
          */
         function flushTail(): void {
             if (bleedDetected || res.writableEnded) return;
-            const alreadyFlushed = Math.max(0, accumulated.length - MAX_SENTINEL_LEN);
-            const tail = accumulated.slice(alreadyFlushed);
-            if (!tail) return;
-            const safe = stripAssistantBleed(accumulated).slice(alreadyFlushed);
-            if (safe) writeDelta(safe);
+            const safe = stripAssistantBleed(accumulated);
+            const remaining = safe.slice(totalFlushed);
+            if (remaining) writeDelta(remaining);
         }
         // ──────────────────────────────────────────────────────────
-
-        // Progress reporter for Telegram
-        const telegramChatId = process.env.TELEGRAM_NOTIFY_ID || null;
-        const progress = new ProgressReporter(telegramChatId);
 
         // Handle client disconnect
         res.on("close", () => {
             if (!isComplete) subprocess.kill();
-            progress.cleanup().catch(() => {});
             resolve();
         });
 
-        // Detect tool calls for progress reporting
+        // Log tool calls
         subprocess.on("message", (msg: any) => {
             if (msg.type !== "stream_event") return;
             const eventType = msg.event?.type;
@@ -421,7 +191,6 @@ async function handleStreamingResponse(
                 const block = msg.event.content_block;
                 if (block?.type === "tool_use" && block.name) {
                     console.error(`[Stream] Tool call: ${block.name}`);
-                    progress.report(block.name).catch(() => {});
                 }
             }
         });
@@ -443,7 +212,6 @@ async function handleStreamingResponse(
 
             subprocess.on("result", (_result: any) => {
                 isComplete = true;
-                progress.cleanup().catch(() => {});
 
                 // Apply bleed strip then parse tool calls
                 const safeText = stripAssistantBleed(toolBuffer);
@@ -480,10 +248,7 @@ async function handleStreamingResponse(
 
             subprocess.on("result", (_result: any) => {
                 isComplete = true;
-                // Flush any buffered tail through bleed detection before finishing
                 flushTail();
-                // Clean up progress message before sending final response
-                progress.cleanup().catch(() => {});
                 if (!res.writableEnded) {
                     // Send final done chunk with finish_reason
                     const doneChunk = createDoneChunk(requestId, lastModel);
@@ -497,12 +262,6 @@ async function handleStreamingResponse(
 
         subprocess.on("error", (error: Error) => {
             console.error("[Streaming] Error:", error.message);
-            // Clean up progress message
-            progress.cleanup().catch(() => {});
-            // Notify via Telegram if it's a timeout
-            if (error.message.includes("timed out")) {
-                notifyTelegram(`⚠️ 任務超時被終止：${error.message}`);
-            }
             if (!res.writableEnded) {
                 res.write(`data: ${JSON.stringify({
                     error: { message: error.message, type: "server_error", code: null },
@@ -558,9 +317,6 @@ async function handleNonStreamingResponse(
 
         subprocess.on("error", (error) => {
             console.error("[NonStreaming] Error:", error.message);
-            if (error.message.includes("timed out")) {
-                notifyTelegram(`⚠️ 任務超時被終止：${error.message}`);
-            }
             res.status(500).json({
                 error: { message: error.message, type: "server_error", code: null },
             });

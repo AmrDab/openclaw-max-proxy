@@ -15,5 +15,4 @@ declare const claudeCodeCliPlugin: {
 export default claudeCodeCliPlugin;
 export { startServer, stopServer, getServer } from "./server/index.js";
 export { ClaudeSubprocess, verifyClaude, verifyAuth } from "./subprocess/manager.js";
-export { sessionManager } from "./session/manager.js";
 //# sourceMappingURL=index.d.ts.map

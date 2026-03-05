@@ -9,8 +9,6 @@ export interface CliInput {
     prompt: string;
     model: ClaudeModel;
     systemPrompt: string | null;
-    sessionId?: string;
-    isResuming?: boolean;
 }
 
 // ─── Content extraction ────────────────────────────────────────────
@@ -255,27 +253,38 @@ When you receive a voice/audio message (indicated by [media attached: ...ogg] or
 Use \`oc-tool\` in Bash for OpenClaw platform operations. Args are always JSON.
 
 ### Browser
-  oc-tool browser status                             # connection status
-  oc-tool browser tabs                               # list open tabs
-  oc-tool browser navigate '{"targetUrl":"URL"}'     # go to URL
-  oc-tool browser snapshot                           # get page accessibility tree (returns refs like e6, e12)
-  oc-tool browser snapshot '{"interactive":true}'    # interactive elements only
-  oc-tool browser screenshot                         # capture page image (returns MEDIA: path)
-  oc-tool browser pdf                                # render page as PDF (returns MEDIA: path)
-  oc-tool browser console '{"expression":"JS_CODE"}' # execute JavaScript in page
-  oc-tool browser act '{"request":{"kind":"click","ref":"e6"}}'
-  oc-tool browser act '{"request":{"kind":"type","ref":"e3","text":"hello"}}'
-  oc-tool browser act '{"request":{"kind":"press","key":"Enter"}}'
-  oc-tool browser act '{"request":{"kind":"hover","ref":"e5"}}'
-  oc-tool browser act '{"request":{"kind":"select","ref":"e4","values":["opt1"]}}'
-  oc-tool browser act '{"request":{"kind":"fill","fields":[{"ref":"e2","value":"test"}]}}'
-  oc-tool browser act '{"request":{"kind":"evaluate","expression":"document.title"}}'
-  oc-tool browser upload '{"ref":"e3","filePath":"/path/to/file"}'  # upload file to input
-  oc-tool browser dialog '{"action":"accept"}'       # handle JS alert/confirm/prompt
-Browser act rules:
-- act action always needs a "request" object with "kind" field
-- kind values: click, type, press, hover, drag, select, fill, resize, wait, evaluate
-- "ref" comes from snapshot output — always run snapshot first to get refs
+  oc-tool browser status                                      # connection status
+  oc-tool browser tabs                                        # list open tabs
+  oc-tool browser tab new                                     # open new tab
+  oc-tool browser tab select 2                                # switch to tab 2
+  oc-tool browser tab close 2                                 # close tab 2
+  oc-tool browser navigate https://example.com                # go to URL
+  oc-tool browser snapshot                                    # accessibility tree (returns refs like e6, e12)
+  oc-tool browser snapshot --interactive --compact            # interactive elements only, compact
+  oc-tool browser snapshot --selector "#main" --interactive   # scoped to a CSS selector
+  oc-tool browser screenshot                                  # capture page image (returns MEDIA: path)
+  oc-tool browser screenshot --full-page                      # full page screenshot
+  oc-tool browser pdf                                         # render page as PDF (returns MEDIA: path)
+  oc-tool browser console --level error                       # get console errors
+  oc-tool browser click e12                                   # click element by ref
+  oc-tool browser click e12 --double                          # double-click
+  oc-tool browser type e3 "hello" --submit                    # type text, press Enter after
+  oc-tool browser press Enter                                 # press a key (Enter, Tab, Escape, etc.)
+  oc-tool browser hover e44                                   # hover over element
+  oc-tool browser drag e10 e11                                # drag from one ref to another
+  oc-tool browser select e9 OptionA OptionB                   # select dropdown options
+  oc-tool browser fill --fields '[{"ref":"e1","type":"text","value":"Ada"}]'  # fill multiple fields
+  oc-tool browser evaluate --fn '(el) => el.textContent' --ref e7             # run JS on element
+  oc-tool browser upload /tmp/file.pdf                        # upload file to active input
+  oc-tool browser dialog --accept                             # accept JS alert/confirm/prompt
+  oc-tool browser wait --text "Done"                          # wait until text appears on page
+  oc-tool browser wait "#main" --url "**/dash" --load networkidle  # wait for navigation
+  oc-tool browser highlight e12                               # highlight element (debug)
+  oc-tool browser scrollintoview e12                          # scroll element into view
+Browser rules:
+- Always run snapshot first to get refs (e.g. e6, e12) before clicking/typing
+- Refs come from snapshot output — never guess them
+- Use --interactive flag on snapshot to show only clickable elements
 
 ### Cron (Scheduled Tasks)
   oc-tool cron status                                # cron system status
@@ -292,12 +301,31 @@ Payload kinds: "agentTurn" (isolated run with message), "systemEvent" (heartbeat
 Deliver: "announce" (send result to chat), "none" (internal only)
 
 ### Message (Send to Channels)
+
+#### Telegram
   oc-tool message send '{"channel":"telegram","target":"telegram:<USER_ID>","message":"..."}'
   oc-tool message send '{"channel":"telegram","target":"telegram:<USER_ID>","message":"...","replyToId":"<MSG_ID>"}'
   oc-tool message read '{"channel":"telegram","target":"telegram:<CHAT_ID>","limit":10}'
   oc-tool message edit '{"channel":"telegram","target":"telegram:<CHAT_ID>","messageId":"<ID>","message":"new text"}'
   oc-tool message react '{"channel":"telegram","target":"telegram:<CHAT_ID>","messageId":"<ID>","emoji":"👍"}'
   oc-tool message pin '{"channel":"telegram","target":"telegram:<CHAT_ID>","messageId":"<ID>"}'
+
+#### Discord
+  oc-tool message send '{"channel":"discord","target":"channel:<CHANNEL_ID>","message":"..."}'
+  oc-tool message send '{"channel":"discord","target":"user:<USER_ID>","message":"..."}'   # DM
+  oc-tool message send '{"channel":"discord","target":"channel:<CHANNEL_ID>","message":"...","replyToId":"<MSG_ID>"}'
+  oc-tool message read '{"channel":"discord","target":"channel:<CHANNEL_ID>","limit":10}'
+  oc-tool message edit '{"channel":"discord","target":"channel:<CHANNEL_ID>","messageId":"<ID>","message":"new text"}'
+  oc-tool message react '{"channel":"discord","target":"channel:<CHANNEL_ID>","messageId":"<ID>","emoji":"👍"}'
+  oc-tool message pin '{"channel":"discord","target":"channel:<CHANNEL_ID>","messageId":"<ID>"}'
+Discord target formats: "channel:<id>" for channels/threads, "user:<id>" for DMs
+
+#### Slack
+  oc-tool message send '{"channel":"slack","target":"slack:<CHANNEL_ID>","message":"..."}'
+  oc-tool message send '{"channel":"slack","target":"slack:<CHANNEL_ID>","message":"...","replyToId":"<MSG_ID>"}'
+  oc-tool message read '{"channel":"slack","target":"slack:<CHANNEL_ID>","limit":10}'
+  oc-tool message edit '{"channel":"slack","target":"slack:<CHANNEL_ID>","messageId":"<ID>","message":"new text"}'
+  oc-tool message react '{"channel":"slack","target":"slack:<CHANNEL_ID>","messageId":"<ID>","emoji":"👍"}'
 
 ### Sessions
   oc-tool sessions_list                              # list active sessions
@@ -563,46 +591,18 @@ export function stripAssistantBleed(text: string): string {
 }
 
 /**
- * Extract only the latest user message for resumed sessions.
- * When resuming, CLI already has the full conversation history in its session file.
- * Sending the full history would duplicate context and waste tokens.
- */
-export function extractLatestUserMessage(messages: OpenAIChatMessage[]): string {
-    for (let i = messages.length - 1; i >= 0; i--) {
-        if (messages[i].role === "user") {
-            return extractText(messages[i].content);
-        }
-    }
-    // Fallback: use full prompt if no user message found
-    return messagesToPrompt(messages);
-}
-
-/**
  * Convert OpenAI chat request to CLI input format
- *
- * @param request - OpenAI chat request
- * @param hasExistingSession - If true, only extract the latest user message
- *                             (CLI will resume from saved session with full history)
  */
-export function openaiToCli(request: OpenAIChatRequest, hasExistingSession = false): CliInput {
+export function openaiToCli(request: OpenAIChatRequest): CliInput {
     // External tools: present and not explicitly disabled
     const hasExternalTools =
         Array.isArray(request.tools) &&
         request.tools.length > 0 &&
         request.tool_choice !== "none";
 
-    const prompt = hasExistingSession
-        ? extractLatestUserMessage(request.messages)
-        : messagesToPrompt(request.messages, hasExternalTools);
-
     return {
-        prompt,
-        // Don't re-send system prompt on resume — CLI already has it from the session
-        systemPrompt: hasExistingSession
-            ? null
-            : extractSystemPrompt(request.messages, hasExternalTools ? request.tools : undefined),
+        prompt: messagesToPrompt(request.messages, hasExternalTools),
+        systemPrompt: extractSystemPrompt(request.messages, hasExternalTools ? request.tools : undefined),
         model: extractModel(request.model),
-        sessionId: request.user,
-        isResuming: hasExistingSession,
     };
 }

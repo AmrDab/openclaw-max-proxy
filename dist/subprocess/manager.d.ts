@@ -3,8 +3,6 @@ import type { ClaudeCliMessage, ClaudeCliAssistant, ClaudeCliResult, ClaudeCliSt
 import type { ClaudeModel } from "../adapter/openai-to-cli.js";
 export interface SubprocessOptions {
     model: ClaudeModel;
-    sessionId?: string;
-    resumeSessionId?: string;
     systemPrompt?: string | null;
     cwd?: string;
     timeout?: number;
@@ -17,7 +15,6 @@ export interface SubprocessEvents {
     error: (error: Error) => void;
     close: (code: number | null) => void;
     raw: (line: string) => void;
-    resume_failed: (errorText: string) => void;
 }
 export declare class ClaudeSubprocess extends EventEmitter {
     private process;

@@ -20,7 +20,6 @@ import type {
 } from "../types/claude-cli.js";
 import type { ClaudeModel } from "../adapter/openai-to-cli.js";
 
-// Stable cwd for session file consistency
 const PROXY_CWD = path.join(
     process.env.HOME || "/tmp",
     ".openclaw",
@@ -31,8 +30,6 @@ const ACTIVITY_TIMEOUT = 600_000; // 10 minutes (no stdout activity = stuck)
 
 export interface SubprocessOptions {
     model: ClaudeModel;
-    sessionId?: string;
-    resumeSessionId?: string;
     systemPrompt?: string | null;
     cwd?: string;
     timeout?: number;
@@ -46,7 +43,6 @@ export interface SubprocessEvents {
     error: (error: Error) => void;
     close: (code: number | null) => void;
     raw: (line: string) => void;
-    resume_failed: (errorText: string) => void;
 }
 
 export class ClaudeSubprocess extends EventEmitter {
@@ -117,7 +113,7 @@ export class ClaudeSubprocess extends EventEmitter {
                     this.processBuffer();
                 });
 
-                // Capture stderr for debugging and resume failure detection
+                // Capture stderr for debugging
                 this.process.stderr?.on("data", (chunk: Buffer) => {
                     const errorText = chunk.toString().trim();
                     if (errorText) {
@@ -125,15 +121,6 @@ export class ClaudeSubprocess extends EventEmitter {
                             "[Subprocess stderr]:",
                             errorText.slice(0, 500)
                         );
-                        // Detect resume failures so caller can invalidate the session
-                        if (
-                            errorText.includes("Failed to resume") ||
-                            errorText.includes("Session not found") ||
-                            errorText.includes("--resume requires") ||
-                            errorText.includes("Could not find session")
-                        ) {
-                            this.emit("resume_failed", errorText);
-                        }
                     }
                 });
 
@@ -173,13 +160,6 @@ export class ClaudeSubprocess extends EventEmitter {
             options.model,
             "--dangerously-skip-permissions",
         ];
-
-        // Session handling: --resume for continuing, --session-id for new
-        if (options.resumeSessionId) {
-            args.push("--resume", options.resumeSessionId);
-        } else if (options.sessionId) {
-            args.push("--session-id", options.sessionId);
-        }
 
         // Pass system prompt as a native CLI flag
         if (options.systemPrompt) {

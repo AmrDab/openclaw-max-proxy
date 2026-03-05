@@ -7,8 +7,6 @@ export interface CliInput {
     prompt: string;
     model: ClaudeModel;
     systemPrompt: string | null;
-    sessionId?: string;
-    isResuming?: boolean;
 }
 /**
  * Extract Claude CLI --model value from request model string.
@@ -51,17 +49,7 @@ export declare function messagesToPrompt(messages: OpenAIChatMessage[], hasExter
  */
 export declare function stripAssistantBleed(text: string): string;
 /**
- * Extract only the latest user message for resumed sessions.
- * When resuming, CLI already has the full conversation history in its session file.
- * Sending the full history would duplicate context and waste tokens.
- */
-export declare function extractLatestUserMessage(messages: OpenAIChatMessage[]): string;
-/**
  * Convert OpenAI chat request to CLI input format
- *
- * @param request - OpenAI chat request
- * @param hasExistingSession - If true, only extract the latest user message
- *                             (CLI will resume from saved session with full history)
  */
-export declare function openaiToCli(request: OpenAIChatRequest, hasExistingSession?: boolean): CliInput;
+export declare function openaiToCli(request: OpenAIChatRequest): CliInput;
 //# sourceMappingURL=openai-to-cli.d.ts.map
