@@ -301,6 +301,7 @@ Payload kinds: "agentTurn" (isolated run with message), "systemEvent" (heartbeat
 Deliver: "announce" (send result to chat), "none" (internal only)
 
 ### Message (Send to Channels)
+Cross-channel messaging — send messages to ANY connected channel (Telegram, Slack, Discord, etc.)
 
 #### Telegram
   oc-tool message send '{"channel":"telegram","target":"telegram:<USER_ID>","message":"..."}'
@@ -310,22 +311,32 @@ Deliver: "announce" (send result to chat), "none" (internal only)
   oc-tool message react '{"channel":"telegram","target":"telegram:<CHAT_ID>","messageId":"<ID>","emoji":"👍"}'
   oc-tool message pin '{"channel":"telegram","target":"telegram:<CHAT_ID>","messageId":"<ID>"}'
 
+#### Slack
+  oc-tool message send '{"channel":"slack","target":"<USER_ID>","message":"..."}'        # DM by Slack user ID (e.g. U0271DRQN3Z)
+  oc-tool message send '{"channel":"slack","target":"channel:<CHANNEL_ID>","message":"..."}'  # send to channel
+  oc-tool message send '{"channel":"slack","target":"channel:<CHANNEL_ID>","message":"...","replyToId":"<MSG_TS>"}'  # thread reply
+  oc-tool message read '{"channel":"slack","target":"channel:<CHANNEL_ID>","limit":10}'
+  oc-tool message edit '{"channel":"slack","target":"channel:<CHANNEL_ID>","messageId":"<MSG_TS>","message":"new text"}'
+  oc-tool message react '{"channel":"slack","target":"channel:<CHANNEL_ID>","messageId":"<MSG_TS>","emoji":"thumbsup"}'
+  oc-tool message pin '{"channel":"slack","target":"channel:<CHANNEL_ID>","messageId":"<MSG_TS>"}'
+Slack notes:
+- target for read/edit/react/pin MUST be "channel:<channelId>" (e.g. "channel:D0AFMGWT3AM") — "#channel-name" does NOT work
+- Slack message IDs are timestamps like "1772450629.016149" (ts field from read output)
+- Slack emoji names are text slugs without colons: "thumbsup", "white_check_mark", etc. (NOT emoji characters)
+- Use send to user ID to get the channelId back, then use that channelId for subsequent read/react/edit/pin
+
 #### Discord
   oc-tool message send '{"channel":"discord","target":"channel:<CHANNEL_ID>","message":"..."}'
   oc-tool message send '{"channel":"discord","target":"user:<USER_ID>","message":"..."}'   # DM
   oc-tool message send '{"channel":"discord","target":"channel:<CHANNEL_ID>","message":"...","replyToId":"<MSG_ID>"}'
   oc-tool message read '{"channel":"discord","target":"channel:<CHANNEL_ID>","limit":10}'
-  oc-tool message edit '{"channel":"discord","target":"channel:<CHANNEL_ID>","messageId":"<ID>","message":"new text"}'
-  oc-tool message react '{"channel":"discord","target":"channel:<CHANNEL_ID>","messageId":"<ID>","emoji":"👍"}'
-  oc-tool message pin '{"channel":"discord","target":"channel:<CHANNEL_ID>","messageId":"<ID>"}'
+  oc-tool message edit '{"channel":"discord","target":"channel:<CHANNEL_ID>","messageId":"<MSG_ID>","message":"new text"}'
+  oc-tool message react '{"channel":"discord","target":"channel:<CHANNEL_ID>","messageId":"<MSG_ID>","emoji":"👍"}'
+  oc-tool message pin '{"channel":"discord","target":"channel:<CHANNEL_ID>","messageId":"<MSG_ID>"}'
 Discord target formats: "channel:<id>" for channels/threads, "user:<id>" for DMs
 
-#### Slack
-  oc-tool message send '{"channel":"slack","target":"slack:<CHANNEL_ID>","message":"..."}'
-  oc-tool message send '{"channel":"slack","target":"slack:<CHANNEL_ID>","message":"...","replyToId":"<MSG_ID>"}'
-  oc-tool message read '{"channel":"slack","target":"slack:<CHANNEL_ID>","limit":10}'
-  oc-tool message edit '{"channel":"slack","target":"slack:<CHANNEL_ID>","messageId":"<ID>","message":"new text"}'
-  oc-tool message react '{"channel":"slack","target":"slack:<CHANNEL_ID>","messageId":"<ID>","emoji":"👍"}'
+Cross-channel example (send from current channel to another):
+  oc-tool message send '{"channel":"slack","target":"<USER_ID>","message":"Hello from Discord!"}'
 
 ### Sessions
   oc-tool sessions_list                              # list active sessions
