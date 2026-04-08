@@ -7,6 +7,7 @@
 import { spawn } from "child_process";
 import { EventEmitter } from "events";
 import path from "path";
+import os from "os";
 import fs from "fs";
 import {
     isAssistantMessage,
@@ -22,7 +23,7 @@ import type {
 import type { ClaudeModel } from "../adapter/openai-to-cli.js";
 
 const PROXY_CWD = path.join(
-    process.env.HOME || "/tmp",
+    os.homedir(),
     ".openclaw",
     "workspace"
 );
@@ -42,7 +43,7 @@ function resolveGatewayToken(): string | null {
     }
     // Read from openclaw.json config
     try {
-        const configPath = path.join(process.env.HOME || "/tmp", ".openclaw", "openclaw.json");
+        const configPath = path.join(os.homedir(), ".openclaw", "openclaw.json");
         const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
         _gatewayToken = config?.gateway?.auth?.token || null;
         if (_gatewayToken) {
@@ -97,9 +98,9 @@ export class ClaudeSubprocess extends EventEmitter {
                         CLAUDECODE: undefined,
                         // Ensure oc-tool is findable and can reach the gateway
                         PATH: [
-                            path.join(process.env.HOME || "/tmp", ".openclaw", "bin"),
-                            process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
-                        ].join(":"),
+                            path.join(os.homedir(), ".openclaw", "bin"),
+                            process.env.PATH ?? "",
+                        ].join(process.platform === "win32" ? ";" : ":"),
                         OPENCLAW_GATEWAY_TOKEN: resolveGatewayToken() ?? undefined,
                         OPENCLAW_GATEWAY_URL: process.env.OPENCLAW_GATEWAY_URL ?? "http://localhost:18789",
                     },
