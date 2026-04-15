@@ -6,20 +6,34 @@
  *   npm run start
  *   # or
  *   node dist/server/standalone.js [port]
+ *
+ * Flags:
+ *   --gateway    Also start the OpenClaw Gateway Operator client.
+ *                This connects to ws://localhost:18789 and auto-resolves
+ *                execution approval requests. Requires gateway token in
+ *                ~/.openclaw/openclaw.json (field: gateway.auth.token)
  */
 import { startServer, stopServer } from "./index.js";
 import { verifyClaude, verifyAuth } from "../subprocess/manager.js";
+import { GatewayOperatorClient } from "../gateway/client.js";
 
 const DEFAULT_PORT = 3456;
+
+let gatewayClient: GatewayOperatorClient | null = null;
 
 async function main() {
     console.log("Claude Code CLI Provider - Standalone Server");
     console.log("============================================\n");
 
+    // Parse command line arguments
+    const args = process.argv.slice(2);
+    const gatewayFlag = args.includes("--gateway");
+    const portArg = args.find((arg) => !arg.startsWith("--"));
+
     // Parse port from command line
-    const port = parseInt(process.argv[2] || String(DEFAULT_PORT), 10);
+    const port = parseInt(portArg || String(DEFAULT_PORT), 10);
     if (isNaN(port) || port < 1 || port > 65535) {
-        console.error(`Invalid port: ${process.argv[2]}`);
+        console.error(`Invalid port: ${portArg}`);
         process.exit(1);
     }
 
@@ -54,6 +68,14 @@ async function main() {
             `    -d '{"model": "claude-sonnet-4", "messages": [{"role": "user", "content": "Hello!"}]}'`
         );
         console.log("\nPress Ctrl+C to stop.\n");
+
+        // Start gateway operator if --gateway flag is provided
+        if (gatewayFlag) {
+            console.log("Starting Gateway Operator client...");
+            gatewayClient = new GatewayOperatorClient();
+            await gatewayClient.start();
+            console.log("  Gateway Operator: Started (auto-resolving approvals)\n");
+        }
     } catch (err) {
         console.error("Failed to start server:", err);
         process.exit(1);
@@ -62,6 +84,9 @@ async function main() {
     // Handle graceful shutdown
     const shutdown = async () => {
         console.log("\nShutting down...");
+        if (gatewayClient) {
+            await gatewayClient.stop();
+        }
         await stopServer();
         process.exit(0);
     };

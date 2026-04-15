@@ -6,7 +6,8 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "claude-max-api": "dist/server/standalone.js"
+    "claude-max-api": "dist/server/standalone.js",
+    "openclaw-mcp": "dist/mcp/standalone.js"
   },
   "scripts": {
     "build": "tsc",
