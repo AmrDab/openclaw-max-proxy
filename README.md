@@ -1,210 +1,187 @@
-# Claude Max API Proxy
+# openclaw-max-proxy
 
-**English | [繁體中文](README.zh-TW.md)**
+Use your **Claude Max subscription** with OpenClaw — no API keys, no per-token costs.
 
-**Use your Claude Max subscription with any OpenAI-compatible client.**
+This proxy sits between OpenClaw and Claude Code CLI. It exposes an OpenAI-compatible HTTP endpoint that OpenClaw talks to, while the actual LLM calls go through your Claude Max subscription via the Claude Code CLI. It also connects to the OpenClaw Gateway as a trusted operator to silently auto-approve execution requests — no more TUI consent prompts.
 
-## Why This Exists
+Optionally, it exposes OpenClaw's tools (browser, exec, canvas, nodes) to Claude CLI as MCP tools, letting Claude wear OpenClaw like a glove.
 
-Claude Max ($200/month) offers unlimited access to Claude, but Anthropic restricts it to the web UI and Claude Code CLI — you can't use your subscription to power third-party tools.
+---
 
-This proxy works around that limitation. It spawns the real Claude Code CLI as a subprocess and exposes an OpenAI-compatible HTTP API locally. Any client that speaks the OpenAI chat completions protocol can use your Max subscription as the backend — including [OpenClaw](https://openclaw.dev) for Telegram/Discord bots.
-
-## How It Works
+## How it works
 
 ```
-┌─────────────┐     HTTP      ┌──────────────────┐    spawn()    ┌───────────────┐
-│  Any OpenAI  │ ──────────▶ │  Claude Max API   │ ──────────▶ │  Claude Code   │
-│  compatible  │ ◀────────── │  Proxy (Express)  │ ◀────────── │  CLI (--print) │
-│  client      │   SSE/JSON   │  localhost:3456   │  stream-json │               │
-└─────────────┘               └──────────────────┘              └───────────────┘
+You (chat via Telegram/Discord/WebChat/etc.)
+        ↓
+  OpenClaw Gateway (ws://localhost:18789)
+        ↓ LLM call (OpenAI-compatible)
+  openclaw-max-proxy (http://localhost:3456/v1)
+        ↓ subprocess
+  Claude Code CLI (your Max subscription)
+        ↓
+  Anthropic — no API key needed
+
+  [gateway operator running in same process]
+        ↓ WebSocket operator connection
+  OpenClaw Gateway — auto-approves exec requests silently
 ```
 
-No third-party servers. Everything runs locally. Requests go through Anthropic's own CLI binary — identical to you typing in your terminal.
+---
 
-## Key Features
+## Prerequisites
 
-- **OpenAI-compatible API** — Drop-in replacement for any client that supports `POST /v1/chat/completions`
-- **Streaming & non-streaming** — Full SSE streaming support with direct delta forwarding
-- **Session persistence** — Conversations maintain context across messages via CLI session resume
-- **No turn limits** — The CLI runs as many tool-call rounds as needed for complex tasks
-- **Activity timeout** — 10-minute inactivity watchdog catches stuck processes while letting long tasks complete
-- **Telegram progress** — Real-time progress updates showing which tools are running (optional)
-- **No native dependencies** — Pure JS, uses `child_process.spawn()` with piped stdio and `--output-format stream-json`
+1. **OpenClaw** installed and running
+   - Install: `npm install -g openclaw@latest`
+   - Docs: https://docs.openclaw.ai
 
-## Quick Start
-
-### Prerequisites
-
-1. **Claude Max subscription** ($200/month) — [Subscribe here](https://claude.ai/settings/billing)
-2. **Claude Code CLI** installed and authenticated:
+2. **Claude Code CLI** installed and authenticated with a Claude Max account
    ```bash
    npm install -g @anthropic-ai/claude-code
-   claude auth login
+   claude login
    ```
 
-### Install & Run
+3. **Node.js 22+**
+
+---
+
+## Installation
 
 ```bash
-npm install -g claude-max-api-proxy
-claude-max-api   # starts on http://localhost:3456
-```
+# Clone the repo
+git clone https://github.com/AmrDab/openclaw-max-proxy.git
+cd openclaw-max-proxy
 
-### Test
-
-```bash
-# Health check
-curl http://localhost:3456/health
-
-# Chat (streaming)
-curl -N -X POST http://localhost:3456/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "claude-sonnet-4",
-    "messages": [{"role": "user", "content": "Hello!"}],
-    "stream": true
-  }'
-```
-
-## Building from Source
-
-The project ships with full TypeScript source in `src/`.
-
-```bash
-git clone https://github.com/GodYeh/claude-max-api-proxy.git
-cd claude-max-api-proxy
+# Install dependencies and build
 npm install
-npm run build    # compiles src/ → dist/
-npm run start    # starts the server
+npm run build
+
+# Install globally
+npm install -g .
 ```
+
+---
 
 ## Configuration
 
-### Environment Variables
+Point OpenClaw to the proxy. In `~/.openclaw/openclaw.json`:
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `TELEGRAM_NOTIFY_ID` | No | Telegram user ID for timeout notifications |
-| `DEBUG` | No | Set to any value to enable request logging |
-
-### Available Models
-
-| Model ID | Description |
-|----------|-------------|
-| `claude-opus-4` | Claude Opus (most capable) |
-| `claude-sonnet-4` | Claude Sonnet (balanced) |
-| `claude-haiku-4` | Claude Haiku (fastest) |
-
-Full model family support with version pinning (e.g. `claude-opus-4-5-20251101`, `claude-sonnet-4-20250514`).
-
-### Auto-Start on macOS
-
-Create `~/Library/LaunchAgents/com.claude-max-api.plist`:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-  <dict>
-    <key>Label</key>
-    <string>com.claude-max-api</string>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <dict>
-      <key>SuccessfulExit</key>
-      <false/>
-    </dict>
-    <key>ProgramArguments</key>
-    <array>
-      <string>/opt/homebrew/bin/node</string>
-      <string>/opt/homebrew/lib/node_modules/claude-max-api-proxy/dist/server/standalone.js</string>
-    </array>
-    <key>EnvironmentVariables</key>
-    <dict>
-      <key>HOME</key>
-      <string>/Users/YOUR_USERNAME</string>
-      <key>PATH</key>
-      <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
-    </dict>
-    <key>StandardOutPath</key>
-    <string>/tmp/claude-max-api.log</string>
-    <key>StandardErrorPath</key>
-    <string>/tmp/claude-max-api.err.log</string>
-  </dict>
-</plist>
-```
-
-Then load it:
-```bash
-launchctl load ~/Library/LaunchAgents/com.claude-max-api.plist
-```
-
-## OpenClaw Integration
-
-Add as a model provider in your `openclaw.json`:
 ```json
 {
+  "agent": {
+    "model": "claude-code-cli/claude-sonnet-4-6"
+  },
   "models": {
     "providers": {
-      "maxproxy": {
+      "claude-code-cli": {
         "baseUrl": "http://127.0.0.1:3456/v1",
-        "apiKey": "not-needed",
-        "api": "openai-completions"
+        "apiKey": "local",
+        "api": "openai-completions",
+        "authHeader": false,
+        "models": [
+          { "id": "claude-sonnet-4-6", "name": "Claude Sonnet 4.6", "api": "openai-completions", "contextWindow": 200000, "maxTokens": 8192, "cost": { "input": 0, "output": 0 } },
+          { "id": "claude-opus-4", "name": "Claude Opus 4", "api": "openai-completions", "contextWindow": 200000, "maxTokens": 8192, "cost": { "input": 0, "output": 0 } }
+        ]
       }
     }
   }
 }
 ```
 
-When used with [OpenClaw](https://openclaw.dev), this proxy supports all native agent features: web search, browser automation, voice messages, scheduled tasks, media attachments, and more.
+---
 
-## API Endpoints
+## Running
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Health check |
-| `/v1/models` | GET | List available models |
-| `/v1/chat/completions` | POST | Chat completions (streaming & non-streaming) |
+### Standard — HTTP proxy only
 
-## Project Structure
+Routes OpenClaw LLM calls through Claude Max. No API cost.
 
-```
-src/
-├── adapter/
-│   ├── openai-to-cli.ts    # OpenAI request → CLI prompt + system prompt
-│   └── cli-to-openai.ts    # CLI JSON stream → OpenAI response format
-├── subprocess/
-│   └── manager.ts           # CLI subprocess lifecycle & activity timeout
-├── session/
-│   └── manager.ts           # Conversation → CLI session mapping
-├── server/
-│   ├── routes.ts             # SSE streaming, progress notifications
-│   ├── index.ts              # Express server setup
-│   └── standalone.ts         # Entry point
-└── types/
-    ├── openai.ts             # OpenAI API type definitions
-    └── claude-cli.ts         # CLI stream-json event types
+```bash
+claude-max-api 3456
 ```
 
-## Security
+### Recommended — HTTP proxy + gateway operator
 
-- **No shell injection** — Uses Node.js `spawn()`, not `exec()`
-- **No stored credentials** — Authentication handled by Claude CLI's OS keychain
-- **No hardcoded secrets** — All sensitive config via environment variables or external config files
-- **Local only by default** — Binds to `127.0.0.1`, not exposed to network
+Same as above, plus auto-approves all OpenClaw exec requests silently. No more TUI consent prompts.
 
-## Tips
+```bash
+claude-max-api 3456 --gateway
+```
 
-- **Don't run heartbeat/cron jobs through Opus** — Fixed-interval requests look like bot traffic. Use lightweight models for scheduled tasks.
-- **Stay within your weekly token limits** — The proxy doesn't circumvent any usage caps. If you rarely hit your Claude Code weekly limit, you have plenty of headroom.
+You'll see:
+```
+[Gateway] Connected to ws://localhost:18789
+[Gateway] Auto-approved exec: <command>
+```
 
-## License
+### Daily startup sequence
 
-MIT
+```bash
+# 1. Start OpenClaw
+openclaw gateway start
 
-## Credits
+# 2. Start the proxy (background terminal tab)
+claude-max-api 3456 --gateway
 
-- Initial codebase based on [atalovesyou/claude-max-api-proxy](https://github.com/atalovesyou/claude-max-api-proxy)
-- Session management, streaming, and OpenClaw integration built with [Claude Code](https://github.com/anthropics/claude-code)
+# 3. Use OpenClaw normally — it now runs on your Claude Max subscription
+```
+
+---
+
+## MCP Glove Mode (optional)
+
+Makes Claude CLI aware of OpenClaw's tools — browser control, exec, canvas, web search — so Claude can drive them directly.
+
+**Step 1:** Add to `~/.claude/settings.json` under `mcpServers`:
+
+```json
+{
+  "mcpServers": {
+    "openclaw": {
+      "command": "openclaw-mcp",
+      "args": []
+    }
+  }
+}
+```
+
+**Step 2:** Run `claude` in any terminal. It now has these tools available:
+
+| Tool | What it does |
+|------|-------------|
+| `openclaw_browser_open` | Opens a URL in OpenClaw's browser |
+| `openclaw_exec` | Runs a command via OpenClaw |
+| `openclaw_web_search` | Searches the web through OpenClaw |
+| `openclaw_send_agent_message` | Sends a message to an OpenClaw session |
+
+The MCP server requires `claude-max-api 3456 --gateway` to be running first.
+
+---
+
+## Available models
+
+| Model ID | Name |
+|----------|------|
+| `claude-sonnet-4-6` | Claude Sonnet 4.6 |
+| `claude-opus-4` | Claude Opus 4 |
+| `claude-sonnet-4` | Claude Sonnet 4.5 |
+| `claude-haiku-4` | Claude Haiku 4 |
+
+Set in `openclaw.json` as `claude-code-cli/<model-id>`.
+
+---
+
+## How the gateway operator works
+
+When OpenClaw needs to run a shell command, it broadcasts an `exec.approval.requested` event over its WebSocket gateway. Normally this surfaces as a TUI consent prompt.
+
+With `--gateway`, this proxy connects to the gateway as a trusted operator (`role: operator`, `scopes: operator.approvals`), listens for those events, and immediately calls `exec.approval.resolve` to approve them. The approval is invisible — OpenClaw proceeds without waiting for human input.
+
+The operator authenticates using:
+- The gateway auth token from `~/.openclaw/openclaw.json`
+- A stable Ed25519 device keypair stored at `~/.openclaw/proxy-device-key.json` (auto-generated on first run)
+
+---
+
+## Forked from
+
+[GodYeh/claude-max-api-proxy](https://github.com/GodYeh/claude-max-api-proxy) — extended with the OpenClaw gateway operator and MCP server layer.
